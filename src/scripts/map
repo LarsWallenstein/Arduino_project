@@ -1,0 +1,353 @@
+#!/usr/bin/env python
+import math
+import rospy
+import numpy as np
+import random
+from std_msgs.msg import Float64, String
+from geometry_msgs.msg import Twist
+
+
+
+class hypothesis:
+  def __init__(self,x,y,angle):
+      self.x=x
+      self.y=y
+      self.angle=0
+      self.weight=1
+      
+  def gauss(self,d,dis):
+    return 1/(math.sqrt(2*math.pi)*(d*0.05)**2)*math.exp(-(d-dis)**2/(2*(d*0.05)**2))
+      
+  def update_weight(self,req,dist):
+    self.weight=1
+    self.weight*=self.gauss(req.d1,dist[0])
+    self.weight*=self.gauss(req.d2,dist[1])
+    self.weight*=self.gauss(req.d3,dist[2])
+    self.weight*=self.gauss(req.d4,dist[3])
+      
+  def update_h(self,st):
+    if(st=="f"):
+      if(self.angle==0):
+        self.x-=1
+      elif(self.angle==90):
+        self.y+=1
+      elif(self.angle==180):
+        self.x+=1
+      else:
+        self.y-=1
+        
+    elif(st=="b"):
+      if(self.angle==0):
+        self.x+=1
+      elif(self.angle==90):
+        self.y-=1
+      elif(self.angle==180):
+        self.x-=1
+      else:
+        self.y+=1
+        
+    elif(st=="r"):
+      self.angle+=(self.angle+90)%360
+      if(self.angle==0):
+        self.x-=1
+      elif(self.angle==90):
+        self.y+=1
+      elif(self.angle==180):
+        self.x+=1
+      else:
+        self.y-=1
+        
+    elif(st=="l"):
+      self.angle+=(self.angle-90)%360
+      if(self.angle==0):
+        self.x-=1
+      elif(self.angle==90):
+        self.y+=1
+      elif(self.angle==180):
+        self.x+=1
+      else:
+        self.y-=1
+        
+   
+    
+class Map:
+    def __init__(self, proxy):
+      self.f=1
+      self.x=49
+      self.y=49
+      self.mapp = np.zeros((100,100))
+      self.mapp[:,:]=0.5
+      self.mapp[0]=1
+      self.mapp[-1]=1
+      self.mapp[:,0]=1
+      self.mapp[:,-1]=1
+      self.hyp=[]
+      self.proxy = proxy
+   
+    def d_up(x,y):
+      b=0
+      k=2
+      dist_x = x-2
+      tmp = min(abs(98-y),y)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        for j in range(y-b,y+b+1):
+          if(self.mapp[x+k,j]==1):
+            return math.sqrt(k**2+(j-y)**2)
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+      return (x)*10
+    
+    def d_down(x,y):
+      b=0
+      k=2
+      dist_x = 297-x
+      tmp = min(abs(98-y),y)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        for j in range(y-b,y+b+1):
+            if(self.mapp[x-k,j]==1):
+              return math.sqrt(k**2+(j-y)**2)
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+      return (100-x*10)
+    
+    
+    def d_left(x,y):
+      b=0
+      k=2
+      dist_x = y-2
+      tmp = min(abs(98-x),x-4)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        for j in range(x-b,x+b+1):
+          if(mapp[j,y-k]==1):
+            return math.sqrt(k**2+(j-x)**2)
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+      return (y-1)*10
+    
+    def d_right(x,y):
+      b=0
+      k=2
+      dist_x = 297-y
+      tmp = min(abs(296-x),x+4)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        for j in range(self.x-b,self.x+b+1):
+            if(self.mapp[j,y-k]==1):
+              return math.sqrt(k**2+(j-x)**2)
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+      return (98-y)*10
+      
+    def measure(self,x,y,angle):
+      dist = []
+      if(angle==0):
+        dist[0]=d_up(x,y)
+        dist[1]=d_right(x,y)
+        dist[2]=d_down(x,y)
+        dist[3]=d_left(x,y)
+      elif(angle==90):
+        dist[0]=d_right(x,y)
+        dist[1]=d_down(x,y)
+        dist[2]=d_left(x,y)
+        dist[3]=d_up(x,y)
+      elif(angle==180):
+        dist[0]=d_down(x,y)
+        dist[1]=d_left(x,y)
+        dist[2]=d_up(x,y)
+        dist[3]=d_right(x,y)
+      else:
+        dist[0]=d_left(x,y)
+        dist[1]=d_up(x,y)
+        dist[2]=d_right(x,y)
+        dist[3]=d_down(x,y)
+      return dist
+        
+        
+    def Up_down(self, d):
+      b=0
+      k=2
+      dist_x = min(98-self.x,d/6)
+      tmp = min(abs(298-self.y),self.y)
+      while(dist_x>=0):
+        dist_y = min(tmp,b)
+        if(dist_x<0.1):
+          for j in range(self.y-b,self.y+b+1):
+            self.mapp[self.x-k,j]=1
+          break
+        else:
+          for j in range(self.y-b,self.y+b+1):
+            self.mapp[self.x-k,j]=0
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+      
+    def Up_up(self,d):
+      b=0
+      k=2
+      dist_x = min(self.x-2,d/6)
+      tmp = min(abs(98-self.y),self.y)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        if(dist_x==1):
+          for j in range(self.y-b,self.y+b+1):
+            self.mapp[self.x+k,j]=1
+          break
+        else:
+          for j in range(self.y-b,self.y+b+1):
+            self.mapp[self.x+k,j]=0
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+        
+      
+    def Up_left(self,d):
+      b=0
+      k=2
+      dist_x = min(self.y-2,d/6)
+      tmp = min(abs(98-self.x),self.x-4)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        if(dist_x==1):
+          for j in range(self.x-b,self.x+b+1):
+            self.mapp[j,self.y-k]=1
+          break
+        else:
+          for j in range(self.x-b,self.x+b+1):
+            self.mapp[j,self.y-k]=0
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+    
+    def Up_right(self,d):
+      b=0
+      k=2
+      dist_x = min(98-self.y,d)
+      tmp = min(abs(98-self.x),self.x+4)
+      while(dist_x>0):
+        dist_y = min(tmp,b)
+        if(dist_x==1):
+          for j in range(self.x-b,self.x+b+1):
+            self.mapp[j,self.y-k]=1
+          break
+        else:
+          for j in range(self.x-b,self.x+b+1):
+            self.mapp[j,self.y-k]=0
+        k+=1
+        if(k==2):
+          b+=1
+        elif((k-2)%4==0):
+          b+=1
+        dist_x=dist_x-1
+    
+      
+    def choose_direction(self):
+      return self.proxy(servicePathRequest)
+  
+    def update(self,req):
+      if(req.angle==0):
+        self.Up_up(req.d1)
+        self.Up_right(req.d2)
+        self.Up_down(req.d3)
+        self.Up_left(req.d4)
+      elif(req.angle==90):
+        self.Up_right(req.d2)
+        self.Up_down(req.d3)
+        self.Up_left(req.d4)
+        self.Up_up(req.d1)
+      elif(req.angle==180):
+        self.Up_down(req.d3)
+        self.Up_left(req.d4)
+        self.Up_up(req.d1)
+        self.Up_right(req.d2)
+      else:
+        self.Up_left(req.d4)
+        self.Up_up(req.d1)
+        self.Up_right(req.d2)
+        self.Up_down(req.d3)
+      if(self.f==1):
+        m=max(req.d1,req.d2)
+        m=max(m,req.d3)
+        m=max(m,req.d4)
+        self.f=0
+        for i in range(300):  
+          while(True):
+            x=random.uniform(49-m+1,49+m-1)
+            y=random.uniform(49-m+1,49+m-1)
+            if(self.mapp[round(x),round(y)]==0.):
+              self.hyp.append(hypothesis(random.uniform()))
+              break
+      
+      sumy=0
+      for j in range(300):
+        self.hyp[j].update_weight(req,self.measure(self.hyp[j].x,self.hyp[j].y,self.hyp[j].angle))
+        sumy+=self.hyp[j].weight
+      maxy=0
+      for i in self.hyp:
+        i.weight=(i.weight)/sumy
+        if(i.weight>maxy):
+          maxy=i.weight
+      st=choose_direction()
+      mas_tmp = []
+      index = round(random.uniform(0,299))
+      beta = 0
+      for i in range(300):
+        beta+=random.uniform(0,1)*2*maxy
+        while(beta>self.mapp[index].weight):
+          beta-=self.hyp[index].weight
+          index = ((index+1)%1000)
+        mas_tmp.append(self.hyp[index])
+      self.hyp=mas_tmp  
+      st=choose_direction()
+      for i in range(1000):
+        self.hyp[i].update_h(st)  
+      return GoToPositionResponse(st)
+    
+  
+def mover_service(Map):
+    d1_publisher = rospy.Publisher('/arduino/distance_1_controller/command', Float64, queue_size=10)
+    d2_publisher = rospy.Publisher('/arduino/distance_1_controller/command', Float64, queue_size=10)
+    d3_publisher = rospy.Publisher('/arduino/distance_1_controller/command', Float64, queue_size=10)
+    d4_publisher = rospy.Publisher('/arduino/distance_1_controller/command', Float64, queue_size=10)
+    a_publisher  = rospy.Publisher('/arduino/angle_1_controller/command', Float64, queue_size=10)
+    planner_service_proxy = rospy.ServiceProxy('/arduino/path_planner', servicePath)
+    rospy.init_node('robot_mover')
+    service = rospy.Service('~safe_move', GoToPosition, Map.update)
+    rospy.spin()      
+      
+if __name__ == '__main__':
+  
+  Map m(planner_service_proxy)
+  
+  try:
+        mover_service(m)
+    except rospy.ROSInterruptException:
+        pass
+
